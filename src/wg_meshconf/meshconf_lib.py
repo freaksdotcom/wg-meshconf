@@ -33,11 +33,11 @@ class Endpoint:
         return ":".join([str(self.address), str(self.port)])
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class WgPeer:
     name: Text
     address: List[IPNetwork]
-    endpoint: Optional[Endpoint] = None
+    endpoint: Optional[Text] = None
     allowed_ips: List[IPNetwork] = field(default_factory=list)
     listen_port: Optional[int] = None
     fw_mark: Optional[Text] = None

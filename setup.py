@@ -28,7 +28,8 @@ setuptools.setup(
     long_description=LONG_DESCRIPTION,
     long_description_content_type="text/markdown",
     url="https://github.com/k4yt3x/wg-meshconf",
-    packages=setuptools.find_packages(),
+    package_dir={"": "src"},
+    packages=setuptools.find_packages(where="src"),
     license="GNU General Public License v3.0",
     install_requires=["cryptography", "prettytable"],
     classifiers=[

@@ -3,5 +3,8 @@
     "python.linting.flake8Enabled": true,
     "python.linting.enabled": true,
     "files.trimTrailingWhitespace": true,
-    "python.linting.mypyEnabled": true
+    "python.linting.mypyEnabled": true,
+    "python.pythonPath": ".venv\\Scripts\\python.exe",
+    "editor.formatOnSave": true,
+    "files.autoSave": "afterDelay"
 }

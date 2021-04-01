@@ -8,7 +8,12 @@ Last Modified: January 12, 2021
 """
 
 # built-in imports
-import fcntl
+import sys
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 import json
 import pathlib
 import pprint
@@ -16,9 +21,9 @@ from contextlib import contextmanager, suppress
 from dataclasses import asdict, fields, replace
 from typing import Any, Dict, Generator, List, Set, Text, Union
 
+# third party imports
 import pystache
 
-# third party imports
 with suppress(ImportError):
     from prettytable import PrettyTable
 
@@ -39,26 +44,36 @@ def peer_database(
     else:
         f_mode = "r+"
     with open(file, mode=f_mode, encoding="utf-8") as database_file:
+        database_file.seek(0, 0)
         try:
-            fcntl.flock(database_file, fcntl.LOCK_EX)
+            if sys.platform == "win32":
+
+                msvcrt.locking(database_file.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                fcntl.flock(database_file, fcntl.LOCK_EX)
             try:
                 peer_db = json.load(database_file)
                 peers = {
                     k: replace(WgPeer(""), **v) for k, v in peer_db["peers"].items()
                 }
                 del peer_db
-            except:
+            except:  # noqa
                 pass
             yield peers
         finally:
-            pprint.pprint(peers)
             if update:
-                peer_db = {
-                    "peers": {p.name: asdict(p) for p in peers.values() if p.name}
-                }
+                peer_db = {"peers": {p.name: p for p in peers.values() if p.name}}
+                pprint.pprint({p.name: p for p in peers.values() if p.name})
+
                 database_file.seek(0, 0)
                 json.dump(peer_db, database_file, indent=4)
-                fcntl.flock(database_file, fcntl.LOCK_UN)
+                database_file.flush()
+
+                if sys.platform == "win32":
+                    database_file.seek(0)
+                    msvcrt.locking(database_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(database_file, fcntl.LOCK_UN)
 
 
 class DatabaseManager:

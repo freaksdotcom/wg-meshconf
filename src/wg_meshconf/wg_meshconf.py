@@ -22,10 +22,80 @@ from database_manager import DatabaseManager
 from meshconf_lib import WgPeer, Endpoint
 
 
+def add_peer(args):
+    database_manager = DatabaseManager(args.database)
+    database_manager.addpeer(
+        WgPeer(
+            args.name,
+            args.address,
+            args.endpoint,
+            args.allowedips,
+            args.listenport,
+            args.fwmark,
+            args.privatekey,
+            args.dns,
+            args.mtu,
+            args.table,
+            args.preup,
+            args.postup,
+            args.predown,
+            args.postdown,
+            args.saveconfig,
+        )
+    )
+
+
+def update_peer(args):
+    database_manager = DatabaseManager(args.database)
+    database_manager.updatepeer(
+        WgPeer(
+            args.name,
+            args.address,
+            args.endpoint,
+            args.allowedips,
+            args.listenport,
+            args.fwmark,
+            args.privatekey,
+            args.dns,
+            args.mtu,
+            args.table,
+            args.preup,
+            args.postup,
+            args.predown,
+            args.postdown,
+            args.saveconfig,
+        )
+    )
+
+
+def show_usage(args):
+    # if no commands are specified
+    print(
+        "No command specified\nUse wg-meshconf --help to see available commands",
+        file=sys.stderr,
+    )
+
+
+def del_peer(args):
+    database_manager = DatabaseManager(args.database)
+    database_manager.delpeer(args.name)
+
+
+def show_peers(args):
+    database_manager = DatabaseManager(args.database)
+    database_manager.showpeers(args.name, args.style, args.simplify)
+
+
+def gen_config(args):
+    database_manager = DatabaseManager(args.database)
+    database_manager.genconfig(args.name, args.output)
+
+
 def parse_arguments() -> argparse.Namespace:
     """parse CLI arguments"""
     parser = argparse.ArgumentParser(
-        prog="wg-meshconf", formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        prog="wg-meshconf",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     parser.add_argument(
@@ -35,7 +105,7 @@ def parse_arguments() -> argparse.Namespace:
         help="path where the database file is stored",
         default=pathlib.Path("database.json"),
     )
-
+    parser.set_defaults(func=show_usage)
     # add subparsers for commands
     subparsers = parser.add_subparsers(dest="command")
 
@@ -125,17 +195,22 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     # add new peer
-    subparsers.add_parser("addpeer", parents=[peer_args])
+    parser_add = subparsers.add_parser("addpeer", aliases=["add"], parents=[peer_args])
+    parser_add.set_defaults(func=add_peer)
 
     # update existing peer information
-    subparsers.add_parser("updatepeer", parents=[peer_args])
+    parser_update = subparsers.add_parser(
+        "updatepeer", aliases=["update", "mod"], parents=[peer_args]
+    )
+    parser_update.set_defaults(func=update_peer)
 
     # delpeer deletes a peer form the database
-    delpeer = subparsers.add_parser("delpeer")
+    delpeer = subparsers.add_parser("delpeer", aliases=["rm", "rmpeer"])
     delpeer.add_argument("name", help="Name of peer to delete")
+    delpeer.set_defaults(func=del_peer)
 
     # showpeers prints a table of all peers and their configurations
-    showpeers = subparsers.add_parser("showpeers")
+    showpeers = subparsers.add_parser("showpeers", aliases=["show"])
     showpeers.add_argument(
         "name",
         help="Name of the peer to query",
@@ -153,9 +228,10 @@ def parse_arguments() -> argparse.Namespace:
         help="do not print columns that are all None",
         action="store_true",
     )
+    showpeers.set_defaults(func=show_peers)
 
     # generate config
-    genconfig = subparsers.add_parser("genconfig")
+    genconfig = subparsers.add_parser("genconfig", aliases=["gen"])
     genconfig.add_argument(
         "name",
         help="Name of the peer to generate configuration for, \
@@ -169,7 +245,7 @@ def parse_arguments() -> argparse.Namespace:
         type=pathlib.Path,
         default=pathlib.Path(__file__).parent.absolute() / "output",
     )
-
+    genconfig.set_defaults(func=gen_config)
     return parser.parse_args()
 
 
@@ -177,66 +253,7 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> None:
 
     args = parse_arguments()
-
-    database_manager = DatabaseManager(args.database)
-
-    if args.command == "addpeer":
-        database_manager.addpeer(
-            WgPeer(
-                args.name,
-                args.address,
-                args.endpoint,
-                args.allowedips,
-                args.listenport,
-                args.fwmark,
-                args.privatekey,
-                args.dns,
-                args.mtu,
-                args.table,
-                args.preup,
-                args.postup,
-                args.predown,
-                args.postdown,
-                args.saveconfig,
-            )
-        )
-
-    elif args.command == "updatepeer":
-        database_manager.updatepeer(
-            WgPeer(
-                args.name,
-                args.address,
-                args.endpoint,
-                args.allowedips,
-                args.listenport,
-                args.fwmark,
-                args.privatekey,
-                args.dns,
-                args.mtu,
-                args.table,
-                args.preup,
-                args.postup,
-                args.predown,
-                args.postdown,
-                args.saveconfig,
-            )
-        )
-
-    elif args.command == "delpeer":
-        database_manager.delpeer(args.name)
-
-    elif args.command == "showpeers":
-        database_manager.showpeers(args.name, args.style, args.simplify)
-
-    elif args.command == "genconfig":
-        database_manager.genconfig(args.name, args.output)
-
-    # if no commands are specified
-    else:
-        print(
-            "No command specified\nUse wg-meshconf --help to see available commands",
-            file=sys.stderr,
-        )
+    args.func(args)
 
 
 # launch the main function if it is not imported as a package

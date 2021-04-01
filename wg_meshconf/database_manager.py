@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# pyre-strict
 """
 Name: Database Manager
 Creator: K4YT3X
@@ -8,298 +8,170 @@ Last Modified: January 12, 2021
 """
 
 # built-in imports
-import contextlib
-import copy
+import fcntl
 import json
 import pathlib
-import sys
+import pprint
+from contextlib import contextmanager, suppress
+from dataclasses import asdict, fields, replace
+from typing import Any, Dict, Generator, List, Set, Text, Union
+
+import pystache
 
 # third party imports
-with contextlib.suppress(ImportError):
+with suppress(ImportError):
     from prettytable import PrettyTable
 
 # local imports
-try:
-    from wireguard import WireGuard
-except ImportError:
-    from .wireguard import WireGuard
+from config_template import CONFIG_TEMPLATE
+from meshconf_lib import WgPeer
 
-INTERFACE_ATTRIBUTES = [
-    "Address",
-    "ListenPort",
-    "FwMark",
-    "PrivateKey",
-    "DNS",
-    "MTU",
-    "Table",
-    "PreUp",
-    "PostUp",
-    "PreDown",
-    "PostDown",
-    "SaveConfig",
-]
 
-INTERFACE_OPTIONAL_ATTRIBUTES = [
-    "ListenPort",
-    "FwMark",
-    "DNS",
-    "MTU",
-    "Table",
-    "PreUp",
-    "PostUp",
-    "PreDown",
-    "PostDown",
-    "SaveConfig",
-]
-
-PEER_ATTRIBUTES = [
-    "PublicKey",
-    "PresharedKey",
-    "AllowedIPs",
-    "Endpoint",
-    "PersistentKeepalive",
-]
+@contextmanager
+def peer_database(
+    file: pathlib.Path, update: bool = False, *args: Any, **kwargs: Any
+) -> Generator[Dict[Text, WgPeer], None, None]:
+    """Context manager for the JSON data file."""
+    peers: Dict[Text, WgPeer] = {}
+    print(file)
+    if not file.exists():
+        f_mode = "w+"
+    else:
+        f_mode = "r+"
+    with open(file, mode=f_mode, encoding="utf-8") as database_file:
+        try:
+            fcntl.flock(database_file, fcntl.LOCK_EX)
+            try:
+                peer_db = json.load(database_file)
+                peers = {
+                    k: replace(WgPeer(""), **v) for k, v in peer_db["peers"].items()
+                }
+                del peer_db
+            except:
+                pass
+            yield peers
+        finally:
+            pprint.pprint(peers)
+            if update:
+                peer_db = {
+                    "peers": {p.name: asdict(p) for p in peers.values() if p.name}
+                }
+                database_file.seek(0, 0)
+                json.dump(peer_db, database_file, indent=4)
+                fcntl.flock(database_file, fcntl.LOCK_UN)
 
 
 class DatabaseManager:
-    def __init__(self, database_path: pathlib.Path):
+    def __init__(self, database_path: pathlib.Path) -> None:
         self.database_path = database_path
-        self.database_template = {"peers": {}}
-        self.wireguard = WireGuard()
 
-    def read_database(self):
-        """read database file into dict
+    def addpeer(self, peer: WgPeer) -> None:
+        with peer_database(self.database_path, update=True) as peer_db:
+            if peer.name in peer_db:
+                raise KeyError(f"Peer with name {peer.name} already exists")
+            peer_db[peer.name] = peer
 
-        Returns:
-            dict: content of database file in dict format
-        """
-        if not self.database_path.is_file():
-            return self.database_template
+    def updatepeer(self, peer: WgPeer) -> None:
+        with peer_database(self.database_path, update=True) as peer_db:
+            if peer.name not in peer_db:
+                raise KeyError(f"Peer with name {peer.name} does not exist")
+            peer_db[peer.name] = peer
 
-        with self.database_path.open(mode="r", encoding="utf-8") as database_file:
-            return json.load(database_file)
+    def delpeer(self, name: str) -> None:
+        with peer_database(self.database_path, update=True) as peer_db:
+            try:
+                del peer_db[name]
+            except KeyError:
+                raise KeyError(f"Peer with ID {name} does not exist")
 
-    def write_database(self, data: dict):
-        """dump data into database file
-
-        Args:
-            data (dict): content of database
-        """
-        with self.database_path.open(mode="w", encoding="utf-8") as database_file:
-            json.dump(data, database_file, indent=4)
-
-    def addpeer(
+    def showpeers(
         self,
-        name: str,
-        Address: list,
-        Endpoint: str = None,
-        AllowedIPs: list = None,
-        ListenPort: int = None,
-        FwMark: str = None,
-        PrivateKey: str = None,
-        DNS: str = None,
-        MTU: int = None,
-        Table: str = None,
-        PreUp: str = None,
-        PostUp: str = None,
-        PreDown: str = None,
-        PostDown: str = None,
-        SaveConfig: bool = None,
-    ):
-        database = copy.deepcopy(self.database_template)
-        database.update(self.read_database())
+        name: Union[Text, Set[Text], List[Text]],
+        style: str = "table",
+        simplify: bool = False,
+    ) -> None:
+        with peer_database(self.database_path) as peer_db:
+            if isinstance(name, str):
+                name = {name}
+            elif name is None:
+                name = set()
+            else:
+                name = set(name)
 
-        if name in database["peers"]:
-            print(f"Peer with name {name} already exists")
-            return
+            field_names = {"name": None}
 
-        database["peers"][name] = {}
-
-        # if private key is not specified, generate one
-        if locals().get("PrivateKey") is None:
-            privatekey = self.wireguard.genkey()
-            database["peers"][name]["PrivateKey"] = privatekey
-
-        for key in INTERFACE_ATTRIBUTES + PEER_ATTRIBUTES:
-            if locals().get(key) is not None:
-                database["peers"][name][key] = locals().get(key)
-
-        self.write_database(database)
-
-    def updatepeer(
-        self,
-        name: str,
-        Address: list = None,
-        Endpoint: str = None,
-        AllowedIPs: list = None,
-        ListenPort: int = None,
-        FwMark: str = None,
-        PrivateKey: str = None,
-        DNS: str = None,
-        MTU: int = None,
-        Table: str = None,
-        PreUp: str = None,
-        PostUp: str = None,
-        PreDown: str = None,
-        PostDown: str = None,
-        SaveConfig: bool = None,
-    ):
-        database = copy.deepcopy(self.database_template)
-        database.update(self.read_database())
-
-        if name not in database["peers"]:
-            print(f"Peer with name {name} does not exist")
-            return
-
-        for key in INTERFACE_ATTRIBUTES + PEER_ATTRIBUTES:
-            if locals().get(key) is not None:
-                database["peers"][name][key] = locals().get(key)
-
-        self.write_database(database)
-
-    def delpeer(self, name: str):
-        database = copy.deepcopy(self.database_template)
-        database.update(self.read_database())
-
-        # abort if user doesn't exist
-        if name not in database["peers"]:
-            print(f"Peer with ID {name} does not exist")
-            return
-
-        database["peers"].pop(name, None)
-
-        # write changes into database
-        self.write_database(database)
-
-    def showpeers(self, name: str, style: str = "table", simplify: bool = False):
-        database = self.read_database()
-
-        # if name is specified, show the specified peer
-        if name is not None:
-            if name not in database["peers"]:
-                print(f"Peer with ID {name} does not exist")
-                return
-            peers = [name]
-
-        # otherwise, show all peers
-        else:
-            peers = [p for p in database["peers"]]
-
-        field_names = ["name"]
-
-        # exclude all columns that only have None's in simplified mode
-        if simplify is True:
-            for peer in peers:
-                for key in INTERFACE_ATTRIBUTES + PEER_ATTRIBUTES:
-                    if (
-                        database["peers"][peer].get(key) is not None
-                        and key not in field_names
-                    ):
-                        field_names.append(key)
-
-        # include all columns by default
-        else:
-            field_names += INTERFACE_ATTRIBUTES + PEER_ATTRIBUTES
-
-        # if the style is table
-        # print with prettytable
-        if style == "table":
-            table = PrettyTable()
-            table.field_names = field_names
-
-            for peer in peers:
-                table.add_row(
-                    [peer]
-                    + [
-                        database["peers"][peer].get(k)
-                        if not isinstance(database["peers"][peer].get(k), list)
-                        else ",".join(database["peers"][peer].get(k))
-                        for k in [i for i in table.field_names if i != "name"]
-                    ]
+            # exclude all columns that only have None's in simplified mode
+            if simplify:
+                field_names.update(
+                    {
+                        f.name: None
+                        for p in peer_db.values()
+                        for f in fields(p)
+                        if getattr(p, f.name) and f.name not in field_names
+                    }
+                )
+            # include all columns by default
+            else:
+                field_names.update(
+                    {f.name: None for f in fields(WgPeer) if f.name not in field_names}
                 )
 
-            print(table)
+            # if the style is table
+            # print with prettytable
+            if style == "table":
+                table = PrettyTable()
+                table.field_names = field_names.keys()
 
-        # if the style is text
-        # print in plaintext format
-        elif style == "text":
-            for peer in peers:
-                print(f"{'peer': <14}{peer}")
-                for key in field_names:
-                    print(
-                        f"{key: <14}{database['peers'][peer].get(key)}"
-                    ) if not isinstance(
-                        database["peers"][peer].get(key), list
-                    ) else print(
-                        f"{key: <14}{','.join(database['peers'][peer].get(key))}"
+                for peer in peer_db.values():
+                    table.add_row(
+                        [peer.name]
+                        + [
+                            getattr(peer, k)
+                            if not isinstance(getattr(peer, k), list)
+                            else ",".join(getattr(peer, k))
+                            for k in [i for i in table.field_names if i != "name"]
+                        ]
                     )
-                print()
 
-    def genconfig(self, name: str, output: pathlib.Path):
-        database = self.read_database()
+                print(table)
 
-        # check if peer ID is specified
-        if name is not None:
-            peers = [name]
-        else:
-            peers = [p for p in database["peers"]]
+            # if the style is text
+            # print in plaintext format
+            elif style == "text":
+                for peer in peer_db.values():
+                    print(f"{'peer': <14}{peer.name}")
+                    for key in field_names:
+                        print(f"{key: <14}{getattr(peer, key)}") if not isinstance(
+                            getattr(peer, key), list
+                        ) else print(f"{key: <14}{','.join(getattr(peer, key))}")
+                    print()
 
-        # check if output directory is valid
-        # create output directory if it does not exist
-        if output.exists() and not output.is_dir():
-            print(
-                "Error: output path already exists and is not a directory",
-                file=sys.stderr,
-            )
-            raise FileExistsError
-        elif not output.exists():
-            print(f"Creating output directory: {output}")
-            output.mkdir(exist_ok=True)
-
-        # for every peer in the database
-        for peer in peers:
-            with (output / f"{peer}.conf").open("w") as config:
-                config.write("[Interface]\n")
-                config.write("# Name: {}\n".format(peer))
-                config.write(
-                    "Address = {}\n".format(
-                        ", ".join(database["peers"][peer]["Address"])
-                    )
+    def genconfig(
+        self, name: Union[Text, List[Text], Set[Text]], output: pathlib.Path
+    ) -> None:
+        with peer_database(self.database_path) as peer_db:
+            # check if output directory is valid
+            # create output directory if it does not exist
+            if output.exists() and not output.is_dir():
+                raise FileExistsError(
+                    "Error: output path already exists and is not a directory"
                 )
-                config.write(
-                    "PrivateKey = {}\n".format(database["peers"][peer]["PrivateKey"])
-                )
+            elif not output.exists():
+                print(f"Creating output directory: {output}")
+                output.mkdir(exist_ok=True)
 
-                for key in INTERFACE_OPTIONAL_ATTRIBUTES:
-                    if database["peers"][peer].get(key) is not None:
-                        config.write(
-                            "{} = {}\n".format(key, database["peers"][peer][key])
-                        )
-
-                # generate [Peer] sections for all other peers
-                for p in [i for i in database["peers"] if i != peer]:
-                    config.write("\n[Peer]\n")
-                    config.write("# Name: {}\n".format(p))
+            template = pystache.parse(CONFIG_TEMPLATE)
+            renderer = pystache.Renderer()
+            for peer in peer_db.values():
+                with (output / f"{peer.name}.conf").open("w") as config:
                     config.write(
-                        "PublicKey = {}\n".format(
-                            self.wireguard.pubkey(database["peers"][p]["PrivateKey"])
+                        renderer.render(
+                            template,
+                            {
+                                "host": peer,
+                                "peers": [
+                                    {"peer": asdict(p)} for p in peer_db.values()
+                                ],
+                            },
                         )
                     )
-
-                    if database["peers"][p].get("Endpoint") is not None:
-                        config.write(
-                            "Endpoint = {}:{}\n".format(
-                                database["peers"][p]["Endpoint"],
-                                database["peers"][p]["ListenPort"],
-                            )
-                        )
-
-                    if database["peers"][p].get("Address") is not None:
-                        if database["peers"][p].get("AllowedIPs") is not None:
-                            allowed_ips = ", ".join(
-                                database["peers"][p]["Address"]
-                                + database["peers"][p]["AllowedIPs"]
-                            )
-                        else:
-                            allowed_ips = ", ".join(database["peers"][p]["Address"])
-                        config.write("AllowedIPs = {}\n".format(allowed_ips))

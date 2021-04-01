@@ -1,0 +1,6 @@
+{
+  "source_directories": [
+    "wg_meshconf"
+  ],
+  "strict": true,
+}

@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Name: wg-meshconf
@@ -15,15 +15,14 @@ Licensed under the GNU General Public License Version 3 (GNU GPL v3),
 import argparse
 import pathlib
 import sys
+from ipaddress import ip_address, ip_network
 
 # local imports
-try:
-    from database_manager import DatabaseManager
-except ImportError:
-    from .database_manager import DatabaseManager
+from database_manager import DatabaseManager
+from meshconf_lib import WgPeer, Endpoint
 
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
     """parse CLI arguments"""
     parser = argparse.ArgumentParser(
         prog="wg-meshconf", formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -32,7 +31,7 @@ def parse_arguments():
     parser.add_argument(
         "-d",
         "--database",
-        type=pathlib.Path,
+        type=argparse.FileType("r+"),
         help="path where the database file is stored",
         default=pathlib.Path("database.json"),
     )
@@ -40,57 +39,96 @@ def parse_arguments():
     # add subparsers for commands
     subparsers = parser.add_subparsers(dest="command")
 
-    # add new peer
-    addpeer = subparsers.add_parser("addpeer")
-    addpeer.add_argument("name", help="Name used to identify this node")
-    addpeer.add_argument(
-        "--address", help="address of the server", action="append", required=True
+    peer_args = argparse.ArgumentParser(add_help=False)
+    peer_args.add_argument(
+        "name",
+        type=str,
+        help="Name used to identify this node",
     )
-    addpeer.add_argument("--endpoint", help="peer's public endpoint address")
-    addpeer.add_argument(
-        "--allowedips", help="additional allowed IP addresses", action="append"
+    peer_args.add_argument(
+        "--address",
+        type=ip_network,
+        help="address of the server",
+        action="append",
+        required=True,
     )
-    addpeer.add_argument("--privatekey", help="private key of server interface")
-    addpeer.add_argument("--listenport", help="port to listen on", default=51820)
-    addpeer.add_argument("--fwmark", help="fwmark for outgoing packets")
-    addpeer.add_argument("--dns", help="server interface DNS servers")
-    addpeer.add_argument("--mtu", help="server interface MTU")
-    addpeer.add_argument("--table", help="server routing table")
-    addpeer.add_argument("--preup", help="command to run before interface is up")
-    addpeer.add_argument("--postup", help="command to run after interface is up")
-    addpeer.add_argument("--predown", help="command to run before interface is down")
-    addpeer.add_argument("--postdown", help="command to run after interface is down")
-    addpeer.add_argument(
+    peer_args.add_argument(
+        "--endpoint",
+        type=Endpoint,
+        help="peer's public endpoint address",
+    )
+    peer_args.add_argument(
+        "--allowedips",
+        type=ip_network,
+        help="additional allowed IP addresses",
+        action="append",
+    )
+    peer_args.add_argument(
+        "--privatekey",
+        type=str,
+        help="private key of server interface",
+    )
+    peer_args.add_argument(
+        "--listenport", type=int, help="port to listen on", default=51820
+    )
+    peer_args.add_argument(
+        "--fwmark",
+        type=str,
+        help="fwmark for outgoing packets",
+    )
+    peer_args.add_argument(
+        "--dns",
+        type=ip_address,
+        help="server interface DNS servers",
+        action="append",
+    )
+    peer_args.add_argument(
+        "--mtu",
+        type=int,
+        help="server interface MTU",
+    )
+    peer_args.add_argument(
+        "--table",
+        type=str,
+        help="server routing table",
+    )
+    peer_args.add_argument(
+        "--table_file",
+        type=pathlib.Path,
+        help="server routing table",
+    )
+    peer_args.add_argument(
+        "--preup",
+        type=str,
+        help="command to run before interface is up",
+    )
+    peer_args.add_argument(
+        "--postup",
+        type=str,
+        help="command to run after interface is up",
+    )
+    peer_args.add_argument(
+        "--predown",
+        type=str,
+        help="command to run before interface is down",
+    )
+    peer_args.add_argument(
+        "--postdown",
+        type=str,
+        help="command to run after interface is down",
+    )
+    peer_args.add_argument(
         "--saveconfig",
         action="store_true",
         help="save server interface to config upon shutdown",
-        default=None,
+        default=False,
     )
 
+    # add new peer
+    subparsers.add_parser("addpeer", parents=[peer_args])
+
     # update existing peer information
-    updatepeer = subparsers.add_parser("updatepeer")
-    updatepeer.add_argument("name", help="Name used to identify this node")
-    updatepeer.add_argument("--address", help="address of the server", action="append")
-    updatepeer.add_argument("--endpoint", help="peer's public endpoint address")
-    updatepeer.add_argument(
-        "--allowedips", help="additional allowed IP addresses", action="append"
-    )
-    updatepeer.add_argument("--privatekey", help="private key of server interface")
-    updatepeer.add_argument("--listenport", help="port to listen on")
-    updatepeer.add_argument("--fwmark", help="fwmark for outgoing packets")
-    updatepeer.add_argument("--dns", help="server interface DNS servers")
-    updatepeer.add_argument("--mtu", help="server interface MTU")
-    updatepeer.add_argument("--table", help="server routing table")
-    updatepeer.add_argument("--preup", help="command to run before interface is up")
-    updatepeer.add_argument("--postup", help="command to run after interface is up")
-    updatepeer.add_argument("--predown", help="command to run before interface is down")
-    updatepeer.add_argument("--postdown", help="command to run after interface is down")
-    updatepeer.add_argument(
-        "--saveconfig",
-        action="store_true",
-        help="save server interface to config upon shutdown",
-        default=None,
-    )
+    subparsers.add_parser("updatepeer", parents=[peer_args])
 
     # delpeer deletes a peer form the database
     delpeer = subparsers.add_parser("delpeer")
@@ -136,7 +174,7 @@ def parse_arguments():
 
 
 # if the file is not being imported
-def main():
+def main() -> None:
 
     args = parse_arguments()
 
@@ -144,40 +182,44 @@ def main():
 
     if args.command == "addpeer":
         database_manager.addpeer(
-            args.name,
-            args.address,
-            args.endpoint,
-            args.allowedips,
-            args.listenport,
-            args.fwmark,
-            args.privatekey,
-            args.dns,
-            args.mtu,
-            args.table,
-            args.preup,
-            args.postup,
-            args.predown,
-            args.postdown,
-            args.saveconfig,
+            WgPeer(
+                args.name,
+                args.address,
+                args.endpoint,
+                args.allowedips,
+                args.listenport,
+                args.fwmark,
+                args.privatekey,
+                args.dns,
+                args.mtu,
+                args.table,
+                args.preup,
+                args.postup,
+                args.predown,
+                args.postdown,
+                args.saveconfig,
+            )
         )
 
     elif args.command == "updatepeer":
         database_manager.updatepeer(
-            args.name,
-            args.address,
-            args.endpoint,
-            args.allowedips,
-            args.listenport,
-            args.fwmark,
-            args.privatekey,
-            args.dns,
-            args.mtu,
-            args.table,
-            args.preup,
-            args.postup,
-            args.predown,
-            args.postdown,
-            args.saveconfig,
+            WgPeer(
+                args.name,
+                args.address,
+                args.endpoint,
+                args.allowedips,
+                args.listenport,
+                args.fwmark,
+                args.privatekey,
+                args.dns,
+                args.mtu,
+                args.table,
+                args.preup,
+                args.postup,
+                args.predown,
+                args.postdown,
+                args.saveconfig,
+            )
         )
 
     elif args.command == "delpeer":
